@@ -250,3 +250,132 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     train(args.data, args.epochs, args.batch)
+
+
+###########################################################
+import os
+import json
+import argparse
+
+from sklearn.model_selection import StratifiedKFold
+
+# ── KROK 4: TRENING + VALIDATION K-FOLD ───────────────────────────────────────
+
+def train(data_path: str, epochs: int, batch_size: int):
+    # 1. Dane
+    X, y_raw = load_npy_dataset(data_path)
+    le, y_int, y_cat = encode_labels(y_raw)
+    num_classes = len(le.classes_)
+
+    # 2. Podział na train/test
+    X_train_all, X_test, y_train_all, y_test, y_int_train_all, y_int_test = train_test_split(
+        X, y_cat, y_int,
+        test_size=0.2,
+        random_state=42,
+        stratify=y_int
+    )
+
+    print(f"Train + validation: {len(X_train_all)} | Test: {len(X_test)}")
+
+    # 3. K-fold validation tylko na zbiorze treningowym
+    n_splits = 5
+    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+
+    fold_accuracies = []
+    fold_losses = []
+
+    print(f"\nRozpoczynam walidację K-Fold: {n_splits} grup\n")
+
+    for fold, (train_idx, val_idx) in enumerate(skf.split(X_train_all, y_int_train_all), start=1):
+        print(f"\n{'═'*50}")
+        print(f"FOLD {fold}/{n_splits}")
+        print(f"{'═'*50}")
+
+        X_train = X_train_all[train_idx]
+        X_val = X_train_all[val_idx]
+
+        y_train = y_train_all[train_idx]
+        y_val = y_train_all[val_idx]
+
+        print(f"Train: {len(X_train)} | Validation: {len(X_val)}")
+
+        model = build_lstm_model(num_classes)
+
+        callbacks = [
+            EarlyStopping(
+                monitor="val_loss",
+                patience=10,
+                restore_best_weights=True,
+                verbose=1
+            )
+        ]
+
+        history = model.fit(
+            X_train,
+            y_train,
+            validation_data=(X_val, y_val),
+            epochs=epochs,
+            batch_size=batch_size,
+            callbacks=callbacks,
+            verbose=1
+        )
+
+        val_loss, val_acc = model.evaluate(X_val, y_val, verbose=0)
+
+        fold_losses.append(val_loss)
+        fold_accuracies.append(val_acc)
+
+        print(f"\nFold {fold} validation accuracy: {val_acc*100:.2f}%")
+        print(f"Fold {fold} validation loss:     {val_loss:.4f}")
+
+    print(f"\n{'═'*50}")
+    print("WYNIKI WALIDACJI K-FOLD")
+    print(f"{'═'*50}")
+    print(f"Średnia validation accuracy: {np.mean(fold_accuracies)*100:.2f}%")
+    print(f"Odchylenie standardowe:      {np.std(fold_accuracies)*100:.2f}%")
+    print(f"Średnia validation loss:     {np.mean(fold_losses):.4f}")
+
+    # 4. Finalny trening na całym train+validation
+    print(f"\n{'═'*50}")
+    print("TRENING FINALNEGO MODELU")
+    print(f"{'═'*50}")
+
+    final_model = build_lstm_model(num_classes)
+    final_model.summary()
+
+    callbacks = [
+        EarlyStopping(
+            monitor="val_loss",
+            patience=10,
+            restore_best_weights=True,
+            verbose=1
+        ),
+        ModelCheckpoint(
+            MODEL_FILE,
+            monitor="val_categorical_accuracy",
+            save_best_only=True,
+            verbose=1
+        ),
+    ]
+
+    history = final_model.fit(
+        X_train_all,
+        y_train_all,
+        validation_data=(X_test, y_test),
+        epochs=epochs,
+        batch_size=batch_size,
+        callbacks=callbacks,
+        verbose=1
+    )
+
+    # 5. Ewaluacja finalna na zbiorze testowym
+    test_loss, test_acc = final_model.evaluate(X_test, y_test, verbose=0)
+
+    print(f"\n{'═'*50}")
+    print("WYNIK FINALNY NA ZBIORZE TESTOWYM")
+    print(f"{'═'*50}")
+    print(f"Test accuracy: {test_acc*100:.2f}%")
+    print(f"Test loss:     {test_loss:.4f}")
+    print(f"Model zapisany → {MODEL_FILE}")
+
+    return history
