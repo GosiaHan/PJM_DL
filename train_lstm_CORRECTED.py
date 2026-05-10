@@ -2,7 +2,7 @@
 train_lstm.py – Training LSTM on Google ASL Signs dataset converted to .npy
 
 Pipeline:
-1. Load .npy sequences from dataset_pjm/
+1. Load .npy sequences from dataset_pjm/ (with caching and class selection)
 2. Encode labels
 3. Split off independent test set
 4. Perform Stratified K-Fold validation on training data
@@ -13,7 +13,9 @@ Pipeline:
 import os
 import json
 import argparse
+import hashlib
 import numpy as np
+import matplotlib.pyplot as plt
 import tensorflow as tf
 
 from tensorflow.keras.models import Sequential
@@ -22,6 +24,7 @@ from tensorflow.keras.utils import to_categorical
 from tensorflow.keras.callbacks import EarlyStopping
 from sklearn.model_selection import train_test_split, StratifiedKFold
 from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import confusion_matrix, classification_report, ConfusionMatrixDisplay
 
 
 # ── CONFIGURATION ─────────────────────────────────────────────────────────────
@@ -30,11 +33,68 @@ SEQUENCE_LENGTH = 30
 NUM_FEATURES = 63
 MODEL_FILE = "pjm_lstm_model.keras"
 LABEL_MAP_FILE = "label_map_pjm.json"
+CACHE_DIR = "cache"
+DEFAULT_DATA_PATH = "dataset_pjm"
+DEFAULT_EPOCHS = 10
+DEFAULT_BATCH_SIZE = 32
+DEFAULT_CLASSES = "all"
+DEFAULT_NUM_CLASSES = 0
+DEFAULT_USE_CACHE = True
+DEFAULT_REFRESH_CACHE = False
+
+
+def resolve_selected_classes(data_path: str, classes_arg: str, num_classes: int):
+    if classes_arg and classes_arg != "all":
+        classes = [c.strip() for c in classes_arg.split(",") if c.strip()]
+        if not classes:
+            raise ValueError("--classes must contain at least one valid class name.")
+        return classes
+
+    if num_classes <= 0:
+        return None
+
+    sign_dirs = sorted([
+        d for d in os.listdir(data_path)
+        if os.path.isdir(os.path.join(data_path, d))
+        and not d.startswith("_")
+        and d != CACHE_DIR
+    ])
+
+    if not sign_dirs:
+        raise RuntimeError(f"No class folders found in '{data_path}'.")
+
+    if num_classes > len(sign_dirs):
+        raise ValueError(
+            f"Requested {num_classes} classes, but only {len(sign_dirs)} are available."
+        )
+
+    return sign_dirs[:num_classes]
 
 
 # ── STEP 1: LOAD DATA ─────────────────────────────────────────────────────────
 
-def load_npy_dataset(data_path: str):
+def get_cache_paths(data_path: str, classes: list | None):
+    cache_path = os.path.join(data_path, CACHE_DIR)
+    if classes is None:
+        cache_key = "all"
+    else:
+        class_key = ",".join(sorted(classes))
+        cache_key = hashlib.md5(class_key.encode("utf-8")).hexdigest()
+
+    return cache_path, os.path.join(cache_path, f"X_{cache_key}.npy"), os.path.join(cache_path, f"y_{cache_key}.npy")
+
+
+def load_npy_dataset(data_path: str, classes: list = None, use_cache: bool = True, refresh_cache: bool = False):
+    cache_path, X_cache, y_cache = get_cache_paths(data_path, classes)
+    can_use_cache = use_cache and not refresh_cache and os.path.exists(X_cache) and os.path.exists(y_cache)
+
+    if can_use_cache:
+        print("Loading data from cache...")
+        X = np.load(X_cache)
+        y = np.load(y_cache, allow_pickle=True)
+        print(f"Dataset loaded from cache: {X.shape[0]} samples, shape: {X.shape}")
+        return X, y
+
     X_list, y_list = [], []
 
     if not os.path.exists(data_path):
@@ -44,11 +104,18 @@ def load_npy_dataset(data_path: str):
 
     sign_dirs = sorted([
         d for d in os.listdir(data_path)
-        if os.path.isdir(os.path.join(data_path, d)) and not d.startswith("_")
+        if os.path.isdir(os.path.join(data_path, d))
+        and not d.startswith("_")
+        and d != CACHE_DIR
     ])
 
     if not sign_dirs:
         raise RuntimeError(f"No class folders found in '{data_path}'.")
+
+    if classes and classes != ['all']:
+        sign_dirs = [d for d in sign_dirs if d in classes]
+        if not sign_dirs:
+            raise RuntimeError(f"None of the specified classes found in '{data_path}'.")
 
     print(f"Found classes ({len(sign_dirs)}): {sign_dirs}\n")
 
@@ -77,6 +144,12 @@ def load_npy_dataset(data_path: str):
     X = np.array(X_list, dtype=np.float32)
     y = np.array(y_list, dtype=object)
 
+    # Save to cache
+    os.makedirs(cache_path, exist_ok=True)
+    np.save(X_cache, X)
+    np.save(y_cache, y)
+    print(f"Data saved to cache at {cache_path}")
+
     print(f"\nDataset: {X.shape[0]} samples, shape: {X.shape}")
     return X, y
 
@@ -97,6 +170,62 @@ def encode_labels(y_raw: np.ndarray):
     print(f"Classes: {label_map}\n")
 
     return le, y_int, y_cat
+
+
+def plot_history(history, output_dir: str = "plots"):
+    os.makedirs(output_dir, exist_ok=True)
+
+    plt.figure(figsize=(12, 5))
+    plt.subplot(1, 2, 1)
+    plt.plot(history.history["loss"], label="train loss")
+    if "val_loss" in history.history:
+        plt.plot(history.history["val_loss"], label="val loss")
+    plt.title("Training Loss")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.legend()
+
+    plt.subplot(1, 2, 2)
+    plt.plot(history.history["categorical_accuracy"], label="train accuracy")
+    if "val_categorical_accuracy" in history.history:
+        plt.plot(history.history["val_categorical_accuracy"], label="val accuracy")
+    plt.title("Training Accuracy")
+    plt.xlabel("Epoch")
+    plt.ylabel("Accuracy")
+    plt.legend()
+
+    path = os.path.join(output_dir, "training_history.png")
+    plt.tight_layout()
+    plt.savefig(path)
+    plt.close()
+    print(f"Training history saved → {path}")
+
+
+def plot_confusion_matrix(y_true, y_pred, labels, output_dir: str = "plots", normalize: bool = True):
+    os.makedirs(output_dir, exist_ok=True)
+    cm = confusion_matrix(y_true, y_pred)
+
+    if normalize:
+        cm = cm.astype("float") / cm.sum(axis=1)[:, np.newaxis]
+        fmt = ".2f"
+        title = "Normalized Confusion Matrix"
+        filename = "confusion_matrix_normalized.png"
+    else:
+        fmt = "d"
+        title = "Confusion Matrix"
+        filename = "confusion_matrix.png"
+
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=labels)
+    fig, ax = plt.subplots(figsize=(10, 10))
+    disp.plot(ax=ax, cmap="Blues", values_format=fmt)
+    ax.set_title(title)
+    plt.xticks(rotation=45, ha="right")
+    plt.tight_layout()
+
+    path = os.path.join(output_dir, filename)
+    fig.savefig(path)
+    plt.close(fig)
+    print(f"{title} saved → {path}")
 
 
 # ── STEP 3: BUILD LSTM MODEL ──────────────────────────────────────────────────
@@ -133,9 +262,9 @@ def build_lstm_model(num_classes: int) -> tf.keras.Model:
 
 # ── STEP 4: TRAINING WITH K-FOLD VALIDATION ───────────────────────────────────
 
-def train(data_path: str, epochs: int, batch_size: int):
+def train(data_path: str, epochs: int, batch_size: int, classes: list = None, use_cache: bool = DEFAULT_USE_CACHE, refresh_cache: bool = DEFAULT_REFRESH_CACHE):
     # 1. Load data
-    X, y_raw = load_npy_dataset(data_path)
+    X, y_raw = load_npy_dataset(data_path, classes, use_cache=use_cache, refresh_cache=refresh_cache)
     le, y_int, y_cat = encode_labels(y_raw)
     num_classes = len(le.classes_)
 
@@ -258,6 +387,20 @@ def train(data_path: str, epochs: int, batch_size: int):
     print(f"Test loss:     {test_loss:.4f}")
     print(f"Model saved → {MODEL_FILE}")
 
+    y_pred_probs = final_model.predict(X_test, verbose=0)
+    y_pred = np.argmax(y_pred_probs, axis=1)
+    y_true = np.argmax(y_test, axis=1)
+    class_names = list(le.classes_)
+
+    print(f"\n{'═' * 50}")
+    print("FINAL TEST CLASSIFICATION REPORT")
+    print(f"{'═' * 50}")
+    print(classification_report(y_true, y_pred, target_names=class_names, digits=4))
+
+    plot_history(history)
+    plot_confusion_matrix(y_true, y_pred, class_names, normalize=True)
+    plot_confusion_matrix(y_true, y_pred, class_names, normalize=False)
+
     return history
 
 
@@ -265,9 +408,25 @@ def train(data_path: str, epochs: int, batch_size: int):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="LSTM training on ASL Signs dataset")
-    parser.add_argument("--data", default="dataset_pjm", help="Folder with .npy sequences")
-    parser.add_argument("--epochs", type=int, default=100, help="Maximum number of epochs")
-    parser.add_argument("--batch", type=int, default=32, help="Batch size")
+    parser.add_argument("--data", default=DEFAULT_DATA_PATH, help="Folder with .npy sequences")
+    parser.add_argument("--epochs", type=int, default=DEFAULT_EPOCHS, help="Maximum number of epochs")
+    parser.add_argument("--batch", type=int, default=DEFAULT_BATCH_SIZE, help="Batch size")
+    parser.add_argument("--classes", type=str, default=DEFAULT_CLASSES, help="Comma-separated list of classes to use, or 'all' for all classes")
+    parser.add_argument("--num-classes", type=int, default=DEFAULT_NUM_CLASSES, help="Number of classes to use from the dataset (uses first sorted classes)")
+    parser.add_argument("--class-count", type=int, default=DEFAULT_NUM_CLASSES, help="Alias for --num-classes; number of classes to use")
+    parser.add_argument("--cache", dest="use_cache", action="store_true", default=DEFAULT_USE_CACHE, help="Reuse cached loaded data when available")
+    parser.add_argument("--no-cache", dest="use_cache", action="store_false", help="Do not use the data cache")
+    parser.add_argument("--refresh-cache", action="store_true", default=DEFAULT_REFRESH_CACHE, help="Reload raw .npy files and refresh the cache")
     args = parser.parse_args()
 
-    train(args.data, args.epochs, args.batch)
+    selected_num_classes = args.class_count if args.class_count > 0 else args.num_classes
+    selected_classes = resolve_selected_classes(args.data, args.classes, selected_num_classes)
+
+    train(
+        args.data,
+        args.epochs,
+        args.batch,
+        selected_classes,
+        use_cache=args.use_cache,
+        refresh_cache=args.refresh_cache,
+    )
