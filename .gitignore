@@ -1,0 +1,4 @@
+*.kreas
+*.json
+*.task
+dataset_pjm/*
