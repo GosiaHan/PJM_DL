@@ -1,57 +1,3 @@
-"""
-load_asl_google.py  –  KOMPLETNY LOADER dla Google ASL Signs (Kaggle competition)
-══════════════════════════════════════════════════════════════════════════════════
-
-JAK POBRAĆ DANE (krok po kroku):
-─────────────────────────────────
-  1. Utwórz konto na https://www.kaggle.com
-  2. Zaakceptuj warunki konkursu:
-       https://www.kaggle.com/competitions/asl-signs/rules
-  3. Wygeneruj token API:
-       kaggle.com → Settings → API → "Create New Token" → pobierze się kaggle.json
-  4. Umieść plik:
-       Linux/Mac:  ~/.kaggle/kaggle.json
-       Windows:    C:\\Users\\<TwojaNazwa>\\.kaggle\\kaggle.json
-  5. Ustaw uprawnienia (Linux/Mac):
-       chmod 600 ~/.kaggle/kaggle.json
-  6. Pobierz:
-       pip install kaggle
-       kaggle competitions download -c asl-signs
-       unzip asl-signs.zip -d asl_signs/
-
-FORMAT DANYCH (dokładnie tak jak w pliku):
-──────────────────────────────────────────
-  train.csv
-  ├── path:           "train_landmark_files/{pid}/{sid}.parquet"
-  ├── sign:           "book", "drink", ...  (250 klas)
-  ├── participant_id: "16""
-  └── sequence_id:    "27610"
-
-  Każdy plik .parquet = jedna sekwencja znaku migowego
-  Format LONG (jeden wiersz = jeden landmark w jednej klatce):
-  ┌─────────┬─────────────────────────────┬────────────────┬───────────────┬──────┬──────┬──────┐
-  │  frame  │           row_id            │     type       │landmark_index │  x   │  y   │  z   │
-  ├─────────┼─────────────────────────────┼────────────────┼───────────────┼──────┼──────┼──────┤
-  │    0    │ 16-27610-0-face-0           │ face           │      0        │ 0.51 │ 0.34 │ 0.00 │
-  │    0    │ 16-27610-0-left_hand-0      │ left_hand      │      0        │ 0.43 │ 0.67 │ NaN  │
-  │    0    │ 16-27610-0-right_hand-0     │ right_hand     │      0        │ 0.55 │ 0.72 │-0.02 │
-  │    1    │ 16-27610-1-right_hand-0     │ right_hand     │      0        │ 0.56 │ 0.70 │-0.01 │
-  └─────────┴─────────────────────────────┴────────────────┴───────────────┴──────┴──────┴──────┘
-
-  Typy landmarks: face (468), pose (33), left_hand (21), right_hand (21)
-  Razem: 543 landmarki na klatkę → 543 wiersze na klatkę
-
-CO ROBIMY:
-──────────
-  • Bierzemy TYLKO landmarki dłoni (right_hand priorytet, left_hand fallback)
-  • Dla każdej klatki: 21 landmarków × 3 współrzędne = wektor 63 cech
-  • Resamplingujemy do 30 klatek (niezależnie od oryginalnej długości)
-  • Zapisujemy jako .npy kształtu (30, 63) → kompatybilne z train_lstm.py
-
-Użycie:
-  python load_asl_google.py --src asl_signs --classes 20 --out dataset_pjm
-"""
-
 import os
 import json
 import argparse
@@ -62,7 +8,7 @@ from tqdm import tqdm
 # ── STAŁE ────────────────────────────────────────────────────────────────────
 SEQUENCE_LENGTH = 30    # ile klatek chcemy na wyjściu
 NUM_LANDMARKS   = 21    # punkty na jedną dłoń (MediaPipe Hands)
-NUM_FEATURES    = NUM_LANDMARKS * 3   # 63: x0,y0,z0, x1,y1,z1, ..., x20,y20,z20
+NUM_FEATURES    = NUM_LANDMARKS * 3 
 HAND_PRIORITY   = ["right_hand", "left_hand"]   # prawa ręka priorytet
 
 
@@ -134,7 +80,7 @@ def _extract_hand_features(frame_df: pd.DataFrame) -> np.ndarray:
         if np.isnan(xs).all():
             continue
 
-        # NaN na poziomie konkretnego punktu → zastąp zerem
+
         xs = np.nan_to_num(xs, nan=0.0)
         ys = np.nan_to_num(ys, nan=0.0)
         zs = np.nan_to_num(zs, nan=0.0)
@@ -146,7 +92,7 @@ def _extract_hand_features(frame_df: pd.DataFrame) -> np.ndarray:
             ys = np.concatenate([ys, np.zeros(pad)])
             zs = np.concatenate([zs, np.zeros(pad)])
 
-        # Przeplatamy: x0,y0,z0, x1,y1,z1, ...
+       
         features = np.empty(NUM_FEATURES, dtype=np.float32)
         for i in range(NUM_LANDMARKS):
             features[i * 3]     = xs[i]
@@ -155,7 +101,7 @@ def _extract_hand_features(frame_df: pd.DataFrame) -> np.ndarray:
 
         return features
 
-    # Żadna ręka nie miała danych → zero-padding
+    # Żadna ręka zero-padding
     return np.zeros(NUM_FEATURES, dtype=np.float32)
 
 
@@ -175,20 +121,20 @@ def _resample_sequence(seq: np.ndarray, target_len: int) -> np.ndarray:
     if T == target_len:
         return seq
 
-    # Indeksy w oryginalnej sekwencji odpowiadające każdej nowej klatce
+    
     indices = np.linspace(0, T - 1, target_len)
 
     resampled = np.empty((target_len, seq.shape[1]), dtype=np.float32)
     for new_i, idx in enumerate(indices):
         lo = int(idx)
         hi = min(lo + 1, T - 1)
-        alpha = idx - lo   # waga interpolacji (0.0 = weź lo, 1.0 = weź hi)
+        alpha = idx - lo   
         resampled[new_i] = seq[lo] * (1 - alpha) + seq[hi] * alpha
 
     return resampled
 
 
-# ── KROK 2: przetwarzanie całego datasetu ────────────────────────────────────
+
 
 def convert_dataset(src_dir: str, out_dir: str, max_classes: int | None):
     """
@@ -201,7 +147,7 @@ def convert_dataset(src_dir: str, out_dir: str, max_classes: int | None):
         ...
     """
     train_csv   = os.path.join(src_dir, "train.csv")
-    landmark_dir = src_dir   # ścieżki w CSV są względne do src_dir
+    landmark_dir = src_dir 
 
     # Walidacja
     if not os.path.exists(train_csv):

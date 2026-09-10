@@ -1,17 +1,52 @@
 # README – Model rozpoznawania języka migowego (PJM/ASL)
 
+## Użyte  narzędzia
+Python + Mediapipe
+Dodatkowe biblioteki: tensorflow, opencv-python, scikit-learn, numpy, pandas, pyarrow, tqdm, kaggle
+
+---
+
+## Typowy przepływ pracy
+
+```
+1. Przygotuj dane → dataset_pjm/nazwa_znaku/*.npy
+2. Wytrenuj model → python train_lstm.py --classes "znak1,znak2,znak3"
+3. Nagraj lub pobierz film z miganiem
+4. Uruchom predykcję → python predict_signs.py --source "film.mp4"
+```
+
+---
+
+## Wymagania systemowe
+- Python >3.11
+- Windows 10/11
+- Brak wymagań dotyczących GPU — działa na CPU
+
+---
+
 ## Struktura plików
 
 ```
 folder_projektu/
 │
-├── train_lstm.py               ← skrypt trenujący model
-├── predict_signs.py            ← skrypt do predykcji na filmie
-├── pjm_lstm_model.keras        ← wytrenowany model (generowany przez trening)
-├── label_map_pjm.json          ← mapa klas (generowana przez trening)
-├── hand_landmarker.task        ← model detekcji dłoni (pobierany automatycznie)
+├── README.md                   - plik z instrukcją (ten, który obecnie czytasz)
+├── requirements.txt            - lista bibliotek wymagana do instalacji
+├── load_asl_google.py          - skrypt przygotowywujący dane treningowe
+├── train_lstm.py               - skrypt trenujący model
+├── predict_signs.py            - skrypt do predykcji na filmie
+├── pjm_lstm_model.keras        - wytrenowany model (generowany przez trening)
+├── label_map_pjm.json          - mapa klas (generowany przez trening)
+├── hand_landmarker.task        - model detekcji dłoni (pobierany automatycznie)
 │
-└── dataset_pjm/                ← folder z danymi treningowymi
+├── asl_signs/                  - folder z nieprzygotowanymi danymi treningowymi
+│   ├── 2044/
+│   │   ├── 635217.parquet
+│   │   ├── 3127189.parquet
+│   │   └── ...
+│   ├── 4718/
+│   │   └── ...
+│   └── ...
+└── dataset_pjm/                - folder z przygotowanymi danymi treningowymi
     ├── apple/
     │   ├── seq_001.npy
     │   ├── seq_002.npy
@@ -30,17 +65,36 @@ Każdy plik `.npy` to jedna sekwencja — **30 klatek × 63 cechy** (21 punktów
 ```powershell
 py -3.11 -m venv sign_env
 .\sign_env\Scripts\Activate.ps1
-pip install requirements.txt
+pip install -r requirements.txt
 ```
 
-> Środowisko trzeba aktywować **za każdym razem** po otwarciu nowego okna PowerShell:
-> ```powershell
-> .\sign_env\Scripts\Activate.ps1
-> ```
+Środowisko trzeba aktywować **za każdym razem** po otwarciu nowego okna PowerShell:
+```powershell
+.\sign_env\Scripts\Activate.ps1
+```
 
 ---
 
-## 1. Skrypt trenujący – `train_lstm.py`
+## 1. Pobranie znaków do nauki modelu - `load_asl_google.py`
+
+Obecnie nie da się już przystąpić do konkursu, więc folder `asl_signs` został załączony do repozytorium. Jest w nim jedynie część znaków dostępnych z konkursu.
+Przy obecnym już folderze `asl_signs` wystarczy uruchomić skrypt:
+```powershell
+python load_asl_google.py
+```
+
+Poniżej dawna instrukcja:
+1. Założyć konto na https://www.kaggle.com/account/login
+2. Wejść na stronę konkursu i zaakceptować zasady poprzez kliknięcie "Join the competition" https://www.kaggle.com/competitions/sign-language-recognition/data
+3. Pobrać dane do nauki modelu poniższym skryptem
+```powershell
+kaggle auth login
+kaggle competitions download -c asl-signs
+unzip asl-signs.zip -d asl_signs/
+python load_asl_google.py
+```
+
+## 2. Skrypt trenujący – `train_lstm.py`
 
 ### Jak działa
 
@@ -50,6 +104,8 @@ pip install requirements.txt
 4. Zapisuje gotowy model do `pjm_lstm_model.keras`
 5. Zapisuje mapę klas do `label_map_pjm.json`
 6. Generuje wykresy do folderu `plots/`
+
+Przykładowe wykresy dostępne w folderze `examples`.
 
 ### Komendy
 
@@ -110,12 +166,12 @@ Po zakończeniu w folderze `plots/` pojawią się:
 
 ---
 
-## 2. Skrypt predykcji – `predict_signs.py`
+## 3. Skrypt predykcji – `predict_signs.py`
 
 ### Jak działa
 
 1. Przy pierwszym uruchomieniu automatycznie pobiera model detekcji dłoni (~25 MB)
-2. Otwiera wskazany plik wideo
+2. Otwiera wskazany plik wideo (można sięgnąć do pliku `fish.mp4` dostępnego w folderze `examples`)
 3. Na każdej klatce wykrywa dłoń i wyciąga 63 cechy (punkty dłoni)
 4. Buforuje 30 klatek, po czym uruchamia model LSTM
 5. Wyświetla przewidywany znak na ekranie
@@ -148,36 +204,18 @@ python predict_signs.py --source "C:\ścieżka\do\film.mp4" --threshold 0.6 --sa
 | Parametr | Domyślnie | Opis |
 |---|---|---|
 | `--source` | *(wymagany)* | Ścieżka do pliku wideo |
-| `--threshold` | `0.5` | Minimalny poziom pewności — poniżej napis jest żółty, powyżej zielony |
+| `--threshold` | `0.5` | Minimalny poziom pewności - poniżej napis jest żółty, powyżej zielony |
 | `--save` | brak | Jeśli podany, zapisuje film z predykcją do pliku `.mp4` |
 
 ### Co widać na ekranie
 
-- **Górny pasek** — przewidywany znak (zielony = pewny, żółty = niepewny)
-- **Pasek pewności** — procent pewności modelu
-- **Dolny pasek** — wypełnienie bufora (30 klatek potrzebnych do predykcji) i FPS
-- **Zielony szkielet** — wykryte punkty dłoni
+- **Górny pasek** - przewidywany znak (zielony = pewny, żółty = niepewny)
+- **Pasek pewności** - procent pewności modelu
+- **Dolny pasek** - wypełnienie bufora (30 klatek potrzebnych do predykcji) i FPS
+- **Zielony szkielet** - wykryte punkty dłoni
 
 ### Sterowanie
 
 | Klawisz | Akcja |
 |---|---|
 | `Q` | Zamknij okno |
-
----
-
-## Typowy przepływ pracy
-
-```
-1. Przygotuj dane → dataset_pjm/nazwa_znaku/*.npy
-2. Wytrenuj model → python train_lstm.py --classes "znak1,znak2,znak3"
-3. Nagraj lub pobierz film z miganiem
-4. Uruchom predykcję → python predict_signs.py --source "film.mp4"
-```
-
----
-
-## Wymagania systemowe
-- Python 3.11
-- Windows 10/11
-- Brak wymagań dotyczących GPU — działa na CPU

@@ -1,5 +1,5 @@
 """
-train_lstm.py – Training LSTM on Google ASL Signs dataset converted to .npy
+train_lstm.py - Training LSTM on Google ASL Signs dataset converted to .npy
 
 Pipeline:
 1. Load .npy sequences from dataset_pjm/ (with caching and class selection)

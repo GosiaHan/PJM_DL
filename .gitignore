@@ -1,4 +1,7 @@
-*.kreas
+*.keras
 *.json
 *.task
-dataset_pjm/*
+dataset_pjm
+sign_env
+plots
+asl_signs
