@@ -8,12 +8,11 @@ Dodatkowe biblioteki: tensorflow, opencv-python, scikit-learn, numpy, pandas, py
 
 ## Typowy przepływ pracy
 
-```
-1. Przygotuj dane → dataset_pjm/nazwa_znaku/*.npy
-2. Wytrenuj model → python train_lstm.py --classes "znak1,znak2,znak3"
-3. Nagraj lub pobierz film z miganiem
-4. Uruchom predykcję → python predict_signs.py --source "film.mp4"
-```
+1. Pobierz dane treningowe z kaggle -> https://www.kaggle.com/competitions/sign-language-recognition/data 
+1. Przygotuj dane -> ```dataset_pjm/nazwa_znaku/*.npy```
+2. Wytrenuj model -> ```python train_lstm.py --classes "znak1,znak2,znak3"```
+3. Nagraj lub pobierz film z zamiganym znakiem
+4. Uruchom predykcję -> ```python predict_signs.py --source "film.mp4"```
 
 ---
 
