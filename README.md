@@ -38,7 +38,7 @@ folder_projektu/
 ├── label_map_pjm.json          - mapa klas (generowany przez trening)
 ├── hand_landmarker.task        - model detekcji dłoni (pobierany automatycznie)
 │
-├── asl_signs/                  - folder z nieprzygotowanymi danymi treningowymi
+├── asl_signs/                  - folder z nieprzygotowanymi danymi treningowymi (pobrane z kaggle.com)
 │   ├── 2044/
 │   │   ├── 635217.parquet
 │   │   ├── 3127189.parquet
