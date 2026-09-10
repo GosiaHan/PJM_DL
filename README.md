@@ -77,13 +77,6 @@ pip install -r requirements.txt
 
 ## 1. Pobranie znaków do nauki modelu - `load_asl_google.py`
 
-Obecnie nie da się już przystąpić do konkursu, więc folder `asl_signs` został załączony do repozytorium. Jest w nim jedynie część znaków dostępnych z konkursu.
-Przy obecnym już folderze `asl_signs` wystarczy uruchomić skrypt:
-```powershell
-python load_asl_google.py
-```
-
-Poniżej dawna instrukcja:
 1. Założyć konto na https://www.kaggle.com/account/login
 2. Wejść na stronę konkursu i zaakceptować zasady poprzez kliknięcie "Join the competition" https://www.kaggle.com/competitions/sign-language-recognition/data
 3. Pobrać dane do nauki modelu poniższym skryptem
